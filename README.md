@@ -5,7 +5,7 @@ Scrapes rental searches on homegate.ch, immoscout24.ch, newhome.ch and flatfox.c
 ## TL;DR
 
 - **Review each flat once.** [Deduplication](#duplicates) groups listings for the same flat across portals and keeps links to the originals.
-- **Filter by what the listing actually shows.** [AI triage](#ai-triage) uses OpenAI, Anthropic or both to flag kitchen size and temporary rentals from descriptions and photos. Add your own exclusion rule, such as `attic apartment`.
+- **Filter by what the listing actually shows.** [AI triage](#ai-triage) uses OpenAI, Anthropic or both to flag swap apartments (Tauschwohnungen), kitchen size, temporary rentals, and so on from descriptions and photos. Add your own exclusion rule, such as `attic apartment`.
 - **Check the [commute](#commute).** With the Google Routes API, group addresses to limit the time or distance of the fastest commute to *any* of them, or set separate limits for *each* destination. For a late night out, check how long it takes to get home by public transport if you leave at, say, 00:30.
 - **Compare [tax-adjusted rents](#tax-adjusted-rent).** See estimated annual tax in each flat's commune for your income and household status. The adjusted rent adds the monthly tax difference relative to the lowest-tax commune in your results.
 - **Exclude property managers.** Block a company such as Livit by name, or label its logo on portals that don't show the name.
