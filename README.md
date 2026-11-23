@@ -2,18 +2,34 @@
 
 Scrapes rental searches on homegate.ch, immoscout24.ch, newhome.ch and flatfox.ch into one JSON file, with a local web UI for review.
 
-All three sites block plain HTTP (DataDome / Cloudflare), so it drives a **visible Chrome** via Playwright with a persistent profile (`data/browser-profile`). If a captcha appears, solve it in that window; the scraper waits up to 5 min and the cookies are reused next time.
+## TL;DR
 
-## Setup
+- **Review each flat once.** [Deduplication](#duplicates) groups listings for the same flat across portals and keeps links to the originals.
+- **Filter by what the listing actually shows.** [AI triage](#ai-triage) uses OpenAI, Anthropic or both to flag kitchen size and temporary rentals from descriptions and photos. Add your own exclusion rule, such as `attic apartment`.
+- **Check the [commute](#commute).** With the Google Routes API, group addresses to limit the time or distance of the fastest commute to *any* of them, or set separate limits for *each* destination. For a late night out, check how long it takes to get home by public transport if you leave at, say, 00:30.
+- **Compare [tax-adjusted rents](#tax-adjusted-rent).** See estimated annual tax in each flat's commune for your income and household status. The adjusted rent adds the monthly tax difference relative to the lowest-tax commune in your results.
+- **Exclude property managers.** Block a company such as Livit by name, or label its logo on portals that don't show the name.
+
+## Quick start
+
+With Python 3.12 and Google Chrome installed, run:
 
 ```sh
-python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt   # uses installed Google Chrome
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python app.py
 ```
 
-## Use
+Open <http://localhost:8765>, choose your locations and portals in **Settings**, then start a scrape. No API keys are needed for basic search and review. For the optional filters:
+
+- **AI triage:** Create an API key on the [OpenAI Platform](https://platform.openai.com/api-keys) or [Anthropic Claude Platform](https://platform.claude.com/settings/keys) and fund the API account. In **Settings → AI triage**, select the provider and save its key. Only **Both (consensus)** needs two funded accounts. Running costs are typically low for a personal search: only eligible listings are sent, and results are cached.
+- **Commute:** In a billing-enabled Google Cloud project, [enable the Routes API and create a key](https://developers.google.com/maps/documentation/routes/get-api-key). Restrict it to the Routes API and save it in **Settings → Commute (Google Maps)**. The key is free; requests beyond the [monthly free allowance](https://developers.google.com/maps/billing-and-pricing/pricing#routes-pricing) are billed.
+
+Homegate, ImmoScout24 and newhome use a **visible Chrome** window. If a captcha appears, solve it there; the scraper waits up to 5 minutes and reuses cookies from `data/browser-profile` next time. Flatfox uses its public API.
+
+## Command line
 
 ```sh
-.venv/bin/python app.py        # UI at http://localhost:8765: set search, scrape, review, block, hide
 .venv/bin/python scrape.py     # same scrape without the UI, using saved settings (still opens Chrome)
 .venv/bin/python test_scrape.py
 ```
@@ -66,7 +82,7 @@ Set your income/age/marital status/children in the UI's Tax box (same inputs as 
 
 ## AI triage
 
-`triage.py` sends each otherwise-eligible listing's facts, description and up to N photos (800px) to Anthropic or OpenAI (pick in the UI) and gets back structured flags: `temporary` (+ end date), `furnished`, `swap` (Tauschwohnung), `shared` (WG), `kitchen` size, violations of your own free-text rules, evidence quotes and a summary. Tick which findings exclude a listing; results are cached in `data/triage.json` and re-run when provider/model/rules/photo count change. newhome descriptions are fetched from its detail API once per new listing during scraping.
+`triage.py` sends each otherwise-eligible listing's facts, description and up to N photos (800px) to Anthropic, OpenAI or both (pick in the UI) and gets back structured flags: `temporary` (+ end date), `furnished`, `swap` (Tauschwohnung), `shared` (WG), `kitchen` size, violations of your own free-text rules, evidence quotes and a summary. Tick which findings exclude a listing; results are cached in `data/triage.json` and re-run when provider/model/rules/photo count change. newhome descriptions are fetched from its detail API once per new listing during scraping.
 
 Default models: `claude-sonnet-5-5` and `gpt-6-luna` (about $0.10 / $0.50 per million input / output tokens, roughly 1/40 of `gpt-5.6-sol`). OpenAI requests use flex processing (half price, slower) and fall back to the standard tier when flex has no capacity. Pick another model in the UI and check it against your own verdicts with `python calibrate.py`.
 
