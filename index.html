@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flat scraper</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.20.2/dist/leaflet-geoman.css"
+  integrity="sha256-oN+OD2MB+fcddyssYZE7uQlK4HNf0iI8zRrs2HHqJQw=" crossorigin="">
+<link rel="stylesheet" href="/static/app.css">
+
+<header class="topbar">
+  <div class="brand">Flats</div>
+  <nav class="tabs" role="tablist">
+    <button data-tab="listings" class="on">Listings</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+  <div class="spacer"></div>
+  <span id="runpill" class="pill"></span>
+  <button id="scrape" class="primary" onclick="saveState().then(() => post('/api/scrape', {quick: true})).then(poll)"
+    title="Newest result pages only, until a page has nothing new. Fast; doesn't detect removed listings.">Scrape new</button>
+  <button id="scrapeFull" onclick="saveState().then(() => post('/api/scrape', {quick: false})).then(poll)"
+    title="All result pages, then checks listings that disappeared: removed ones move to 'deleted' (kept), still-online ones are refreshed.">Full scrape</button>
+  <button id="publishBtn" onclick="post('/api/publish').then(poll)"
+    title="Upload the listings, your statuses and notes to the read-only page on Azure (publish.py; see README)">Publish</button>
+  <button id="inviteBtn" onclick="openInvite()"
+    title="Create a link that gives someone access to the published page">Invite</button>
+  <button id="logToggle" class="ghost" onclick="toggleLog()" title="Show the log of the last run">Log</button>
+</header>
+<pre id="log" hidden></pre>
+<div id="unsaved" class="banner" hidden></div>
+<div id="saveFailed" class="banner" hidden>
+  ⚠ Settings were <b>not</b> saved: app.py isn't answering. They're kept on this page.
+  <button onclick="saveState()">Retry</button>
+</div>
+<div id="conflict" class="banner" hidden>
+  ⚠ Settings were changed in another tab or window, so this save was <b>not</b> applied (to avoid overwriting them).
+  <button onclick="load()">Load the current settings</button> (discards unsaved changes on this page)
+</div>
+
+<main id="tab-listings">
+  <div class="toolbar">
+    <input id="q" type="search" placeholder="Search title, address, provider, notes, tags…  ( / )" oninput="setFilter('q', this.value)">
+    <div id="statusFilter" class="seg"></div>
+    <select id="tagFilter" onchange="setFilter('tag', this.value)" title="Only listings with this tag"></select>
+    <label class="toggle"><input type="checkbox" id="f-unseen" onchange="setFilter('unseen', this.checked)"> Unopened</label>
+    <label class="toggle"><input type="checkbox" id="showExcluded" onchange="setFilter('excluded', this.checked)"> Show excluded</label>
+    <select id="reasonFilter" onchange="setFilter('reason', this.value)" title="Only the listings excluded for this reason"></select>
+    <select id="removedFilter" onchange="setFilter('removed', this.value)" title="Listings taken off their portal (found by a full scrape or ↻); they're kept with your notes"></select>
+    <div class="spacer"></div>
+    <label class="sortby">Sort <select id="sortSel" onchange="setSort(this.value)"></select>
+      <button id="sortDir" class="ghost icon" onclick="setSort(sortKey, -sortDir)" title="Reverse order"></button></label>
+    <div class="seg" id="viewSeg">
+      <button data-view="cards" title="Cards (v)">Cards</button><button data-view="table" title="Table (v)">Table</button><button data-view="map" title="Map (m)">Map</button>
+    </div>
+  </div>
+  <div class="subbar">
+    <span id="counts"></span>
+    <button id="markSeen" class="link" onclick="markAllSeen()">Mark all shown as opened</button>
+    <button id="refreshConflicts" class="link" hidden onclick="refreshListings(conflictKeys())"></button>
+    <a href="/api/export" class="link">Download eligible.json</a>
+    <button id="pdfBtn" class="link" onclick="downloadPdf()"
+      title="Every listing marked Maybe or Shortlist: overview map, then each one with all facts, your notes, a map and all photos">Download PDF (maybe + shortlist)</button>
+    <span id="taxBase" class="muted"></span>
+    <div class="spacer"></div>
+    <button class="link" onclick="$('help').showModal()">Keyboard shortcuts (?)</button>
+  </div>
+
+  <div class="split">
+    <section id="listpane">
+      <div id="cards"></div>
+      <div id="tablewrap">
+        <details id="columns"><summary>Columns</summary><div id="colToggles"></div></details>
+        <style id="colStyle"></style>
+        <table id="results"><thead><tr>
+          <th data-k="status">Status</th><th data-k="site">Site</th><th data-k="provider_label">Provider</th><th data-k="title">Title</th>
+          <th data-k="rooms">Rooms</th><th data-k="area_m2">m²</th><th data-k="floor">Floor</th><th data-k="rent_chf">CHF</th><th data-k="tax_extra_month_chf">+Tax/mo</th><th data-k="rent_tax_adjusted_chf">Tax-adj. CHF</th>
+          <th data-k="address">Address</th><th data-k="available_from">Available</th><th data-k="published">Published</th>
+          <th data-k="kitchen">Kitchen</th><th data-k="flags">AI flags</th><th data-k="commute">Commute</th><th data-k="excluded">Excluded</th>
+        </tr></thead><tbody id="rows"></tbody></table>
+      </div>
+      <span id="more"></span>
+      <div id="mapwrap">
+        <div id="map"></div>
+        <div id="mapLegend" class="legend"></div>
+        <div id="mapAreas" class="areas"></div>
+      </div>
+    </section>
+    <aside id="detail"></aside>
+  </div>
+</main>
+
+<main id="tab-settings" hidden>
+  <div class="settings">
+    <fieldset><legend>Search</legend>
+      <div class="sites">
+        <label><input type="checkbox" name="site" value="homegate"> homegate <button class="sitebtn" data-site="homegate">new</button></label>
+        <label><input type="checkbox" name="site" value="immoscout24"> immoscout24 <button class="sitebtn" data-site="immoscout24">new</button></label>
+        <label><input type="checkbox" name="site" value="newhome"> newhome <button class="sitebtn" data-site="newhome">new</button></label>
+        <label><input type="checkbox" name="site" value="flatfox"> flatfox <button class="sitebtn" data-site="flatfox">new</button></label>
+      </div>
+      <div class="hint">"new" scrapes only that portal (new listings), other portals untouched.</div>
+      <div id="locations"></div>
+      <input id="locq" placeholder="Add location: Meilen (Bezirk), Thalwil, 8810…" oninput="suggest()"
+        onkeydown="if (event.key === 'Enter') suggest(true)" autocomplete="off">
+      <div id="suggestions"></div>
+      <div class="grid2">
+        <label>Min rooms <input type="number" step="0.5" id="min_rooms"></label>
+        <label>Min m² <input type="number" id="min_area"></label>
+        <label>Max rent CHF (0 = any) <input type="number" id="max_rent"></label>
+        <label>Max pages/site <input type="number" id="max_pages"></label>
+      </div>
+      <label>Move-in between <span class="row"><input type="date" id="move_in_earliest"> and <input type="date" id="move_in_latest"></span></label>
+      <div class="hint">"By arrangement" and unknown dates are kept. homegate/immoscout24 dates come from the AI triage (marked AI).</div>
+      <div class="actions"><button class="primary" onclick="saveState()">Save</button></div>
+    </fieldset>
+
+    <fieldset><legend>Tax (swisstaxmap.ch)</legend>
+      <div class="grid2">
+        <label>Gross income CHF/yr (0 = off) <input type="number" id="tax-income"></label>
+        <label>Age <input type="number" id="tax-age"></label>
+        <label>Partner income <input type="number" id="tax-income2"></label>
+        <label>Partner age <input type="number" id="tax-age2"></label>
+        <label>Children ages <input id="tax-children" placeholder="e.g. 3, 6"></label>
+        <label class="check"><input type="checkbox" id="tax-married"> Married</label>
+      </div>
+      <div class="hint">Tax is looked up per listing ZIP. Baseline = lowest-tax commune among current listings;
+        "+Tax/mo" = (tax − baseline) / 12, "Tax-adj. CHF" = rent + that.</div>
+      <div class="actions"><button class="primary" onclick="saveState()">Save</button></div>
+    </fieldset>
+
+    <fieldset><legend>Blocklist</legend>
+      <label>One per line, matches anywhere in the listing <textarea id="blocklist" rows="6"></textarea></label>
+      <div class="actions"><button class="primary" onclick="saveState()">Save</button></div>
+      <h4>Labelled logos</h4>
+      <div id="providers"></div>
+    </fieldset>
+
+    <fieldset><legend>AI triage</legend>
+      <label>Provider <select id="ai-provider"><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option>
+        <option value="both">Both (consensus, ~2× cost)</option></select></label>
+      <table class="keys">
+        <tr><td>Anthropic</td>
+          <td><input type="password" id="key-anthropic" placeholder="API key" size="10" autocomplete="off"> <button onclick="saveKey('anthropic')">Save</button>
+            <span id="keystatus-anthropic" class="muted"></span></td>
+          <td><select id="model-anthropic"></select></td></tr>
+        <tr><td>OpenAI</td>
+          <td><input type="password" id="key-openai" placeholder="API key" size="10" autocomplete="off"> <button onclick="saveKey('openai')">Save</button>
+            <span id="keystatus-openai" class="muted"></span></td>
+          <td><select id="model-openai"></select></td></tr>
+      </table>
+      <label>Photos per listing <input type="number" id="ai-max_images" min="0" max="20"></label>
+      <h4>Exclude listings that are</h4>
+      <label class="check"><input type="checkbox" id="ai-ex-furnished"> furnished</label>
+      <label class="check"><input type="checkbox" id="ai-ex-swap"> Tauschwohnung</label>
+      <label class="check"><input type="checkbox" id="ai-ex-shared"> shared (WG)</label>
+      <label class="check"><input type="checkbox" id="ai-ex-temporary"> temporary, unless until ≥ <input type="date" id="ai-ex-temporary_min_until"></label>
+      <label class="check">kitchen ≤ <select id="ai-ex-kitchen"><option value="">off</option><option>tiny</option><option>small</option><option>normal</option></select></label>
+      <label class="check"><input type="checkbox" id="ai-ex-custom"> matching any of these (one per line):</label>
+      <textarea id="ai-custom_rules" rows="4" placeholder="describe what to EXCLUDE, e.g.&#10;attic apartment&#10;ground floor&#10;no balcony"></textarea>
+      <div class="hint">Each line describes an unwanted listing. Write "attic apartment", not "no attic apartment".</div>
+      <label class="check"><input type="checkbox" id="ai-auto"> run after each scrape</label>
+      <div class="actions"><button class="primary" onclick="saveState().then(() => post('/api/triage')).then(poll)">Save &amp; run triage</button></div>
+      <div class="hint">Only otherwise-eligible listings are sent; results are cached. Changing provider, model, photos or rules re-checks them.</div>
+    </fieldset>
+
+    <fieldset><legend>Commute (Google Maps)</legend>
+      <label>API key <span class="row"><input type="password" id="key-google_maps" placeholder="Routes API key" autocomplete="off">
+        <button onclick="saveKey('google_maps')">Save</button> <span id="keystatus-google_maps" class="muted"></span></span></label>
+      <div id="points"></div>
+      <div class="actions"><button onclick="addPoint()">+ destination</button></div>
+      <label class="check"><input type="checkbox" id="commute-auto"> run after each scrape</label>
+      <div class="actions"><button class="primary" onclick="saveState().then(() => post('/api/commute')).then(poll)">Save &amp; compute commutes</button></div>
+      <div class="hint">Empty limit = no limit; missing data never excludes. Transit: arrival on a coming Tuesday; car: without traffic.
+        Only otherwise-eligible listings are routed; results are cached.</div>
+    </fieldset>
+
+    <fieldset><legend>Output</legend>
+      <p><a href="/api/export">Download eligible.json</a> (also written to data/eligible.json, with your notes under <code>user</code>).</p>
+      <div class="hint">⚠ = contradicted by the listing's text or the other portal; such values never exclude.
+        ↻ re-reads a listing from its own page (opens Chrome; paced).</div>
+    </fieldset>
+  </div>
+</main>
+
+<div id="lightbox" hidden>
+  <img id="lbImg" referrerpolicy="no-referrer" alt="">
+  <button class="lb-nav prev" onclick="step(-1)" title="Previous (←)">‹</button>
+  <button class="lb-nav next" onclick="step(1)" title="Next (→)">›</button>
+  <div class="lb-bar">
+    <span id="lbCount"></span>
+    <button id="lbPin" onclick="togglePin()" title="Pin this photo (p): pinned photos come first and become the cover"></button>
+    <a id="lbOpen" target="_blank" rel="noreferrer" title="Open the full image in a new tab">Original ↗</a>
+    <button onclick="closeLightbox()" title="Close (Esc)">Close</button>
+  </div>
+  <div id="lbThumbs"></div>
+</div>
+
+<dialog id="invite">
+  <h3>Invite to the published page</h3>
+  <p class="hint">A GitHub login, or the email of a Microsoft account. They open the link signed in with that account,
+    within 7 days, and can then see the page.</p>
+  <div class="row"><input id="inviteWho" placeholder="GitHub login or email" autocomplete="off"
+    onkeydown="if (event.key === 'Enter') createInvite()">
+    <button id="inviteGo" class="primary" onclick="createInvite()">Create link</button></div>
+  <div id="inviteOut" class="row" hidden><input id="inviteUrl" readonly onfocus="this.select()">
+    <button onclick="copyInvite()">Copy</button></div>
+  <p id="inviteMsg" class="muted"></p>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
+
+<dialog id="help">
+  <h3>Keyboard shortcuts</h3>
+  <table class="keys">
+    <tr><td><kbd>j</kbd> <kbd>k</kbd> / <kbd>↓</kbd> <kbd>↑</kbd></td><td>next / previous listing</td></tr>
+    <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>previous / next photo</td></tr>
+    <tr><td><kbd>f</kbd> or <kbd>Space</kbd></td><td>photos full screen</td></tr>
+    <tr><td><kbd>p</kbd></td><td>pin / unpin the current photo</td></tr>
+    <tr><td><kbd>0</kbd>–<kbd>5</kbd></td><td>status: inbox, maybe, shortlist, contacted, viewing, applied</td></tr>
+    <tr><td><kbd>s</kbd></td><td>star</td></tr>
+    <tr><td><kbd>h</kbd></td><td>hide (reject) and go to the next listing</td></tr>
+    <tr><td><kbd>n</kbd></td><td>write a note</td></tr>
+    <tr><td><kbd>t</kbd></td><td>add a tag</td></tr>
+    <tr><td><kbd>o</kbd></td><td>open on the portal</td></tr>
+    <tr><td><kbd>v</kbd> / <kbd>m</kbd></td><td>switch cards ↔ table / map</td></tr>
+    <tr><td><kbd>/</kbd></td><td>search</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>close photos, leave a text field</td></tr>
+  </table>
+  <form method="dialog"><button class="primary">Close</button></form>
+</dialog>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.20.2/dist/leaflet-geoman.min.js"
+  integrity="sha256-INC6OAaVJr6Vkoe4rhMjT2YPktso3oZ4LrytAo3antM=" crossorigin=""></script>
+<script src="/static/app.js"></script>
+</html>

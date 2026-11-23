@@ -1,0 +1,12 @@
+{
+  "blocklist": ["Livit", "Wincasa", "Privera"],
+  "provider_labels": {
+    "80fe26aedb8b": "Livit",
+    "857fda0c5f28": "Livit",
+    "25d6a68b1fc4": "wincasa",
+    "594a2a6f08a7": "Privera",
+    "aee663936a0f": "MPK",
+    "ddfc9cec8434": "Apleona",
+    "4511d8adefd2": "Kornhaus Verwaltungs AG"
+  }
+}
